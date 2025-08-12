@@ -78,24 +78,6 @@ _configure_mcp_server_logging()
 from browser_use import ActionModel, Agent
 from browser_use.browser import BrowserProfile, BrowserSession
 from browser_use.config import get_default_llm, get_default_profile, load_browser_use_config
-
-# Also configure the root logger and all existing loggers to use stderr
-logging.root.handlers = []
-stderr_handler = logging.StreamHandler(sys.stderr)
-stderr_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-logging.root.addHandler(stderr_handler)
-logging.root.setLevel(logging.ERROR)
-
-# Configure all existing loggers to use stderr
-for name in list(logging.root.manager.loggerDict.keys()):
-	logger = logging.getLogger(name)
-	logger.handlers = []
-	logger.addHandler(stderr_handler)
-	logger.setLevel(logging.ERROR)
-	logger.propagate = False
-
-
-# Import browser_use modules
 from browser_use.controller.service import Controller
 from browser_use.filesystem.file_system import FileSystem
 from browser_use.llm.openai.chat import ChatOpenAI
