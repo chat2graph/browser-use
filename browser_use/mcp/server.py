@@ -249,13 +249,7 @@ class BrowserUseServer:
 					description='Get the current state of the page including all interactive elements',
 					inputSchema={
 						'type': 'object',
-						'properties': {
-							'include_screenshot': {
-								'type': 'boolean',
-								'description': 'Whether to include a screenshot of the current page',
-								'default': False,
-							}
-						},
+						'properties': {},
 					},
 				),
 				types.Tool(
