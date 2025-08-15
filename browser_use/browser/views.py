@@ -1,10 +1,10 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from bubus import BaseEvent
 from pydantic import BaseModel
 
-from browser_use.dom.history_tree_processor.service import DOMHistoryElement
-from browser_use.dom.views import DOMState
+from browser_use.dom.views import DOMInteractedElement, SerializedDOMState
 
 # Known placeholder image data for about:blank pages - a 4x4 white PNG
 PLACEHOLDER_4PX_SCREENSHOT = (
@@ -16,10 +16,15 @@ PLACEHOLDER_4PX_SCREENSHOT = (
 class TabInfo(BaseModel):
 	"""Represents information about a browser tab"""
 
+	# Original fields
 	page_id: int
 	url: str
 	title: str
 	parent_page_id: int | None = None  # parent page that contains this popup or cross-origin iframe
+
+	# Additional fields for compatibility with dictionary format
+	id: str | None = None  # tab ID string like "tab_0"
+	index: int | None = None  # tab index
 
 
 class PageInfo(BaseModel):
@@ -47,12 +52,11 @@ class PageInfo(BaseModel):
 
 
 @dataclass
-class BrowserStateSummary(DOMState):
+class BrowserStateSummary:
 	"""The summary of the browser's current state designed for an LLM to process"""
 
-	# provided by DOMState:
-	# element_tree: DOMElementNode
-	# selector_map: SelectorMap
+	# provided by SerializedDOMState:
+	dom_state: SerializedDOMState
 
 	url: str
 	title: str
@@ -65,7 +69,7 @@ class BrowserStateSummary(DOMState):
 	pixels_below: int = 0
 	browser_errors: list[str] = field(default_factory=list)
 	is_pdf_viewer: bool = False  # Whether the current page is a PDF viewer
-	loading_status: str | None = None  # Message about page loading status (e.g., network timeout)
+	recent_events: str | None = None  # Text summary of recent browser events
 
 
 @dataclass
@@ -75,13 +79,32 @@ class BrowserStateHistory:
 	url: str
 	title: str
 	tabs: list[TabInfo]
-	interacted_element: list[DOMHistoryElement | None] | list[None]
-	screenshot: str | None = None
+	interacted_element: list[DOMInteractedElement | None] | list[None]
+	screenshot_path: str | None = None
+
+	def get_screenshot(self) -> str | None:
+		"""Load screenshot from disk and return as base64 string"""
+		if not self.screenshot_path:
+			return None
+
+		import base64
+		from pathlib import Path
+
+		path_obj = Path(self.screenshot_path)
+		if not path_obj.exists():
+			return None
+
+		try:
+			with open(path_obj, 'rb') as f:
+				screenshot_data = f.read()
+			return base64.b64encode(screenshot_data).decode('utf-8')
+		except Exception:
+			return None
 
 	def to_dict(self) -> dict[str, Any]:
 		data = {}
 		data['tabs'] = [tab.model_dump() for tab in self.tabs]
-		data['screenshot'] = self.screenshot
+		data['screenshot_path'] = self.screenshot_path
 		data['interacted_element'] = [el.to_dict() if el else None for el in self.interacted_element]
 		data['url'] = self.url
 		data['title'] = self.title
@@ -90,6 +113,22 @@ class BrowserStateHistory:
 
 class BrowserError(Exception):
 	"""Base class for all browser errors"""
+
+	message: str
+	details: dict[str, Any] | None = None
+	while_handling_event: BaseEvent[Any] | None = None
+
+	def __init__(self, message: str, details: dict[str, Any] | None = None, event: BaseEvent[Any] | None = None):
+		self.message = message
+		super().__init__(message)
+		self.details = details
+		self.while_handling_event = event
+
+	def __str__(self) -> str:
+		if self.details:
+			return f'{self.message} ({self.details}) during: {self.while_handling_event}'
+		else:
+			return f'{self.message} (while handling event: {self.while_handling_event})'
 
 
 class URLNotAllowedError(BrowserError):
