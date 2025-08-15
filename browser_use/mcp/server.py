@@ -695,7 +695,7 @@ class BrowserUseServer:
 			return 'Error: No browser session active'
 
 		state = await self.browser_session.get_browser_state_summary(cache_clickable_elements_hashes=False)
-    await self.browser_session.remove_highlights()
+		await self.browser_session.remove_highlights()
 
 		result = {
 			'url': state.url,
