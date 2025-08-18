@@ -843,22 +843,35 @@ class BrowserUseServer:
 
 		# Scrolling by the height of one screen at a time is more like human operation
 		# and makes it easier to trigger lazy loading.
-		viewport_height = await tab.evaluate('window.innerHeight')
-		last_height = await tab.evaluate('document.body.scrollHeight')
+		viewport_height_result = await tab.cdp_client.send.Runtime.evaluate(
+			params={'expression': 'window.innerHeight'}, session_id=tab.session_id
+		)
+		viewport_height = viewport_height_result['result']['value']
+		last_height_result = await tab.cdp_client.send.Runtime.evaluate(
+			params={'expression': 'document.body.scrollHeight'}, session_id=tab.session_id
+		)
+		last_height = last_height_result['result']['value']
 		max_scroll_attempts = 1
 		scroll_attempts = 0
 
 		while True:
-			await tab.evaluate(f'window.scrollBy(0, {viewport_height})')
+			await tab.cdp_client.send.Runtime.evaluate(
+				params={'expression': f'window.scrollBy(0, {viewport_height})'}, session_id=tab.session_id
+			)
 
 			await asyncio.sleep(0.5)
 
 			try:
-				await tab.wait_for_load_state('networkidle', timeout=5000)
+				# This is a playwright-specific method. Using a delay instead for CDP.
+				# await tab.wait_for_load_state('networkidle', timeout=5000)
+				await asyncio.sleep(2)  # Wait for network to idle
 			except Exception:
 				await asyncio.sleep(0.5)
 
-			new_height = await tab.evaluate('document.body.scrollHeight')
+			new_height_result = await tab.cdp_client.send.Runtime.evaluate(
+				params={'expression': 'document.body.scrollHeight'}, session_id=tab.session_id
+			)
+			new_height = new_height_result['result']['value']
 			if new_height == last_height:
 				scroll_attempts += 1
 				if scroll_attempts >= max_scroll_attempts:
@@ -869,7 +882,9 @@ class BrowserUseServer:
 
 			last_height = new_height
 
-		await tab.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+		await tab.cdp_client.send.Runtime.evaluate(
+			params={'expression': 'window.scrollTo(0, document.body.scrollHeight)'}, session_id=tab.session_id
+		)
 		await asyncio.sleep(2)
 		logger.debug('Page scrolling finished.')
 
@@ -883,17 +898,26 @@ class BrowserUseServer:
 
 		tab = None
 		original_scroll_y = 0
+		original_scroll_y_result = None
 
 		try:
 			if tab_index is not None:
-				if not (0 <= tab_index < len(self.browser_session.tabs)):
+				targets = await self.browser_session._cdp_get_all_pages()
+				if not (0 <= tab_index < len(targets)):
 					return f'Error: Invalid tab index: {tab_index}'
-				tab = self.browser_session.tabs[tab_index]
+				target_id = targets[tab_index]['targetId']
+				tab = await self.browser_session.get_or_create_cdp_session(target_id)
 			else:
-				tab = await self.browser_session.get_current_page()
+				tab = self.browser_session.agent_focus
+
+			if not tab:
+				return 'Error: Could not get current page.'
 
 			# step 1: Save the original scroll position for restoration later
-			original_scroll_y = await tab.evaluate('window.scrollY')
+			original_scroll_y_result = await tab.cdp_client.send.Runtime.evaluate(
+				params={'expression': 'window.scrollY'}, session_id=tab.session_id
+			)
+			original_scroll_y = original_scroll_y_result['result']['value']
 
 			absolute_path = os.path.abspath(file_path)
 			directory = os.path.dirname(absolute_path)
@@ -904,10 +928,16 @@ class BrowserUseServer:
 			await self._scroll_to_bottom(tab)
 
 			# step 3: Emulate 'screen' media type for WYSIWYG layout
-			await tab.emulate_media(media='screen')
+			await tab.cdp_client.send.Emulation.setEmulatedMedia(params={'media': 'screen'}, session_id=tab.session_id)
 
 			# step 4: Generate PDF
-			await tab.pdf(path=absolute_path, print_background=True, scale=0.5)
+			pdf_data = await tab.cdp_client.send.Page.printToPDF(
+				params={'printBackground': True, 'scale': 0.5}, session_id=tab.session_id
+			)
+			import base64
+
+			with open(absolute_path, 'wb') as f:
+				f.write(base64.b64decode(pdf_data['data']))
 
 			return absolute_path
 		except Exception as e:
@@ -915,9 +945,11 @@ class BrowserUseServer:
 			return f'Error: Failed to export PDF: {e}'
 		finally:
 			# step 5: Restore the original scroll position and viewport size
-			if tab and not tab.is_closed():
-				await tab.emulate_media(media=None)
-				await tab.evaluate(f'window.scrollTo(0, {original_scroll_y})')
+			if tab and original_scroll_y_result:
+				await tab.cdp_client.send.Emulation.setEmulatedMedia(params={'media': None}, session_id=tab.session_id)
+				await tab.cdp_client.send.Runtime.evaluate(
+					params={'expression': f'window.scrollTo(0, {original_scroll_y})'}, session_id=tab.session_id
+				)
 				logger.debug(f'Restored the original scroll position to {original_scroll_y}px')
 
 	async def run(self):
