@@ -270,7 +270,7 @@ class BrowserUseServer:
 							},
 							'tab_index': {
 								'type': 'integer',
-								'description': 'Index of the tab to export. Defaults to the current tab.',
+								'description': 'Index of the tab to export. Defaults to the current tab. (1~n)',
 								'default': None,
 							},
 						},
@@ -837,28 +837,42 @@ class BrowserUseServer:
 			return f'Closed tab {tab_index}: {url}'
 		return f'Invalid tab index: {tab_index}'
 
-	async def _scroll_to_bottom(self, tab):
+	async def _scroll_to_bottom(self, cdp_session):
 		"""Use screen-by-screen scrolling with added delays to ensure lazy-loaded images are reliably triggered."""
 		logger.debug('Starting to scroll page to load all content...')
 
 		# Scrolling by the height of one screen at a time is more like human operation
 		# and makes it easier to trigger lazy loading.
-		viewport_height = await tab.evaluate('window.innerHeight')
-		last_height = await tab.evaluate('document.body.scrollHeight')
+		viewport_height = await cdp_session.cdp_client.send.Runtime.evaluate(
+			params={'expression': 'window.innerHeight'}, session_id=cdp_session.session_id
+		)
+		viewport_height = viewport_height.get('result', {}).get('value', 768)
+
+		last_height = await cdp_session.cdp_client.send.Runtime.evaluate(
+			params={'expression': 'document.body.scrollHeight'}, session_id=cdp_session.session_id
+		)
+		last_height = last_height.get('result', {}).get('value', 0)
+
 		max_scroll_attempts = 1
 		scroll_attempts = 0
 
 		while True:
-			await tab.evaluate(f'window.scrollBy(0, {viewport_height})')
+			await cdp_session.cdp_client.send.Runtime.evaluate(
+				params={'expression': f'window.scrollBy(0, {viewport_height})'}, session_id=cdp_session.session_id
+			)
 
 			await asyncio.sleep(0.5)
 
 			try:
-				await tab.wait_for_load_state('networkidle', timeout=5000)
+				await cdp_session.cdp_client.send.Page.waitForDebugger(session_id=cdp_session.session_id)
 			except Exception:
 				await asyncio.sleep(0.5)
 
-			new_height = await tab.evaluate('document.body.scrollHeight')
+			new_height_result = await cdp_session.cdp_client.send.Runtime.evaluate(
+				params={'expression': 'document.body.scrollHeight'}, session_id=cdp_session.session_id
+			)
+			new_height = new_height_result.get('result', {}).get('value', 0)
+
 			if new_height == last_height:
 				scroll_attempts += 1
 				if scroll_attempts >= max_scroll_attempts:
@@ -869,7 +883,9 @@ class BrowserUseServer:
 
 			last_height = new_height
 
-		await tab.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+		await cdp_session.cdp_client.send.Runtime.evaluate(
+			params={'expression': 'window.scrollTo(0, document.body.scrollHeight)'}, session_id=cdp_session.session_id
+		)
 		await asyncio.sleep(2)
 		logger.debug('Page scrolling finished.')
 
@@ -880,33 +896,55 @@ class BrowserUseServer:
 		if not file_path.lower().endswith('.pdf'):
 			return 'Error: File path must end with .pdf'
 
-		tab = None
+		cdp_session = None
 		original_scroll_y = 0
-		original_scroll_y_result = None
+		original_tab_index = -1
 
 		try:
-			if tab_index is not None:
-				if not (0 <= tab_index < len(self.browser_session.tabs)):
-					return f'Error: Invalid tab index: {tab_index}'
-				tab = self.browser_session.tabs[tab_index]
-			else:
-				tab = self.browser_session.agent_focus
+			if self.browser_session.agent_focus:
+				original_tab_index = await self.browser_session.get_tab_index(self.browser_session.agent_focus.target_id)
+
+			tabs = await self.browser_session.get_tabs()
+			n_tabs = len(tabs)
+
+			target_tab_index = (tab_index - 1) if tab_index is not None else (n_tabs - 1)
+
+			if not (0 <= target_tab_index < n_tabs):
+				return f'Error: Invalid tab index: {tab_index}'
+
+			if target_tab_index != original_tab_index:
+				await self._switch_tab(target_tab_index)
+
+			cdp_session = self.browser_session.agent_focus
+			if not cdp_session:
+				return 'Error: No active tab found in browser session'
 
 			# step 1: Save the original scroll position for restoration later
-			original_scroll_y = await tab.evaluate('window.scrollY')
+			scroll_y_result = await cdp_session.cdp_client.send.Runtime.evaluate(
+				params={'expression': 'window.scrollY'}, session_id=cdp_session.session_id
+			)
+			original_scroll_y = scroll_y_result.get('result', {}).get('value', 0)
 
 			absolute_path = os.path.abspath(file_path)
 			directory = os.path.dirname(absolute_path)
 			if not os.path.exists(directory):
 				os.makedirs(directory)
 			# step 2: Scroll to the bottom of the page to ensure all lazy-loaded content is loaded
-			await self._scroll_to_bottom(tab)
+			await self._scroll_to_bottom(cdp_session)
 
 			# step 3: Emulate 'screen' media type for WYSIWYG layout
-			await tab.emulate_media(media='screen')
+			await cdp_session.cdp_client.send.Emulation.setEmulatedMedia(
+				params={'media': 'screen'}, session_id=cdp_session.session_id
+			)
 
 			# step 4: Generate PDF
-			await tab.pdf(path=absolute_path, print_background=True, scale=0.5)
+			pdf_data = await cdp_session.cdp_client.send.Page.printToPDF(
+				params={'printBackground': True, 'scale': 0.5}, session_id=cdp_session.session_id
+			)
+			import base64
+
+			with open(absolute_path, 'wb') as f:
+				f.write(base64.b64decode(pdf_data['data']))
 
 			return absolute_path
 		except Exception as e:
@@ -914,10 +952,20 @@ class BrowserUseServer:
 			return f'Error: Failed to export PDF: {e}'
 		finally:
 			# step 5: Restore the original scroll position and viewport size
-			if tab and not tab.is_closed():
-				await tab.emulate_media(media=None)
-				await tab.evaluate(f'window.scrollTo(0, {original_scroll_y})')
+			if cdp_session:
+				await cdp_session.cdp_client.send.Emulation.setEmulatedMedia(
+					params={'media': None}, session_id=cdp_session.session_id
+				)
+				await cdp_session.cdp_client.send.Runtime.evaluate(
+					params={'expression': f'window.scrollTo(0, {original_scroll_y})'}, session_id=cdp_session.session_id
+				)
 				logger.debug(f'Restored the original scroll position to {original_scroll_y}px')
+			if (
+				original_tab_index != -1
+				and self.browser_session.agent_focus
+				and (await self.browser_session.get_tab_index(self.browser_session.agent_focus.target_id)) != original_tab_index
+			):
+				await self._switch_tab(original_tab_index)
 
 	async def run(self):
 		"""Run the MCP server."""
