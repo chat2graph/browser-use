@@ -881,8 +881,6 @@ class BrowserUseServer:
 		if not file_path.lower().endswith('.pdf'):
 			return 'Error: File path must end with .pdf'
 
-		await self.browser_session._wait_for_page_and_frames_load(timeout_overwrite=10.0)
-
 		tab = None
 		original_scroll_y = 0
 
