@@ -225,7 +225,7 @@ class BrowserUseServer:
 						'properties': {
 							'index': {
 								'type': 'integer',
-								'description': 'The index of the link or element to click (from browser_get_state)',
+								'description': 'The index of the link or element to click (from browser_get_interactive_elements_info)',
 							},
 							'new_tab': {
 								'type': 'boolean',
@@ -244,7 +244,7 @@ class BrowserUseServer:
 						'properties': {
 							'index': {
 								'type': 'integer',
-								'description': 'The index of the input element (from browser_get_state)',
+								'description': 'The index of the input element (from browser_get_interactive_elements_info)',
 							},
 							'text': {'type': 'string', 'description': 'The text to type'},
 						},
@@ -252,8 +252,8 @@ class BrowserUseServer:
 					},
 				),
 				types.Tool(
-					name='browser_get_state',
-					description='Get the current state of the page including all interactive elements',
+					name='browser_get_interactive_elements_info',
+					description='Get all interactive elements in the current page',
 					inputSchema={
 						'type': 'object',
 						'properties': {},
@@ -426,7 +426,7 @@ class BrowserUseServer:
 			elif tool_name == 'browser_type':
 				return await self._type_text(arguments['index'], arguments['text'])
 
-			elif tool_name == 'browser_get_state':
+			elif tool_name == 'browser_get_interactive_elements_info':
 				return await self._get_browser_state(arguments.get('include_screenshot', False))
 
 			elif tool_name == 'browser_export_whole_webpage_as_pdf':
