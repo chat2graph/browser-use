@@ -473,7 +473,11 @@ class BrowserUseServer:
 			'downloads_path': str(Path.home() / 'Downloads' / 'browser-use-mcp'),
 			'wait_between_actions': 0.5,
 			'keep_alive': False,
-			'user_data_dir': '~/.config/browseruse/profiles/default',
+			# Set user_data_dir to None to allow concurrent server instances.
+			# This forces BrowserProfile to create a unique temporary directory for each
+			# browser session, avoiding conflicts over the same profile directory.
+			# 'user_data_dir': '~/.config/browseruse/profiles/default',  # before
+			'user_data_dir': None,
 			'is_mobile': False,
 			'device_scale_factor': 1.0,
 			'disable_security': False,
