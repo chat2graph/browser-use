@@ -739,10 +739,7 @@ class BrowserUseServer:
 		ExtractAction = create_model(
 			'ExtractAction',
 			__base__=ActionModel,
-			extract_structured_data=(
-				dict[str, Any],
-				{'query': query, 'extract_links': extract_links},
-			),
+			extract_structured_data=(dict[str, Any], {'query': query, 'extract_links': extract_links}),
 		)
 
 		action = ExtractAction()
