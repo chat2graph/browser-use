@@ -24,6 +24,7 @@ Or as an MCP server in Claude Desktop or other MCP clients:
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -273,6 +274,20 @@ class BrowserUseServer:
 						'required': ['file_path'],
 					},
 				),
+				types.Tool(
+					name='browser_screenshot',
+					description='Captures a screenshot of the current viewport and saves it to a file. Returns the absolute path to the generated file.',
+					inputSchema={
+						'type': 'object',
+						'properties': {
+							'file_path': {
+								'type': 'string',
+								'description': 'The relative path to save the PNG file. It must end with .png.',
+							},
+						},
+						'required': ['file_path'],
+					},
+				),
 				# types.Tool(
 				# 	name='browser_extract_content',
 				# 	description='Extract structured content from the current page based on a query',
@@ -431,6 +446,9 @@ class BrowserUseServer:
 
 			elif tool_name == 'browser_export_whole_webpage_as_pdf':
 				return await self._export_whole_webpage_as_pdf(arguments['file_path'])
+
+			elif tool_name == 'browser_screenshot':
+				return await self._screenshot(arguments['file_path'])
 
 			elif tool_name == 'browser_extract_content':
 				return await self._extract_content(arguments['query'], arguments.get('extract_links', False))
@@ -949,6 +967,68 @@ class BrowserUseServer:
 					session_id=cdp_session.session_id,
 				)
 				logger.debug(f'Restored the original scroll position to {original_scroll_y}px')
+
+	async def _screenshot(self, file_path: str) -> str:
+		"""Capture a screenshot of the entire webpage after zooming out to 50%."""
+		if not self.browser_session:
+			return 'Error: Browser session not active'
+		if not file_path.lower().endswith('.png'):
+			return 'Error: File path must end with .png'
+
+		original_scroll_y = 0
+		cdp_session: Optional[CDPSession] = None
+		try:
+			cdp_session = self.browser_session.agent_focus
+			if not cdp_session:
+				return 'Error: No active tab found in browser session'
+
+			# 1. Save the original scroll position
+			scroll_y_result = await cdp_session.cdp_client.send.Runtime.evaluate(
+				params={'expression': 'window.scrollY'},
+				session_id=cdp_session.session_id,
+			)
+			original_scroll_y = scroll_y_result.get('result', {}).get('value', 0)
+
+			absolute_path = os.path.abspath(file_path)
+			directory = os.path.dirname(absolute_path)
+			if not os.path.exists(directory):
+				os.makedirs(directory)
+
+			# 2. Scroll to the bottom to load all content
+			await self._scroll_to_bottom(cdp_session)
+
+			# 3. Set the page scale factor to 50%
+			await cdp_session.cdp_client.send.Emulation.setPageScaleFactor(
+				params={'pageScaleFactor': 0.5}, session_id=cdp_session.session_id
+			)
+
+			# 4. Capture a full-page screenshot after scaling
+			screenshot_data = await cdp_session.cdp_client.send.Page.captureScreenshot(
+				params={'format': 'png', 'captureBeyondViewport': True},
+				session_id=cdp_session.session_id,
+			)
+
+			# 5. Save the file
+			with open(absolute_path, 'wb') as f:
+				f.write(base64.b64decode(screenshot_data['data']))
+
+			return absolute_path
+		except Exception as e:
+			logger.error(f'Failed to capture screenshot: {e}', exc_info=True)
+			return f'Error: Failed to capture screenshot: {e}'
+		finally:
+			# 6. Restore original settings
+			if cdp_session:
+				# Restore page scale factor to 100%
+				await cdp_session.cdp_client.send.Emulation.setPageScaleFactor(
+					params={'pageScaleFactor': 1}, session_id=cdp_session.session_id
+				)
+				# Restore original scroll position
+				await cdp_session.cdp_client.send.Runtime.evaluate(
+					params={'expression': f'window.scrollTo(0, {original_scroll_y})'},
+					session_id=cdp_session.session_id,
+				)
+				logger.debug('Restored page scale and original scroll position.')
 
 	async def run(self):
 		"""Run the MCP server."""
