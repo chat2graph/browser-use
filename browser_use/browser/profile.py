@@ -9,7 +9,6 @@ from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
 
 from pydantic import AfterValidator, AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
-from uuid_extensions import uuid7str
 
 from browser_use.config import CONFIG
 from browser_use.observability import observe_debug
@@ -64,6 +63,7 @@ CHROME_DISABLED_COMPONENTS = [
 	'OverscrollHistoryNavigation',
 	'InfiniteSessionRestore',
 	'ExtensionDisableUnsupportedDeveloper',
+	'ExtensionManifestV2Unsupported',
 ]
 
 CHROME_HEADLESS_ARGS = [
@@ -555,6 +555,23 @@ class BrowserLaunchPersistentContextArgs(BrowserLaunchArgs, BrowserContextArgs):
 		return Path(v).expanduser().resolve()
 
 
+class ProxySettings(BaseModel):
+	"""Typed proxy settings for Chromium traffic.
+
+	- server: Full proxy URL, e.g. "http://host:8080" or "socks5://host:1080"
+	- bypass: Comma-separated hosts to bypass (e.g. "localhost,127.0.0.1,*.internal")
+	- username/password: Optional credentials for authenticated proxies
+	"""
+
+	server: str | None = Field(default=None, description='Proxy URL, e.g. http://host:8080 or socks5://host:1080')
+	bypass: str | None = Field(default=None, description='Comma-separated hosts to bypass, e.g. localhost,127.0.0.1,*.internal')
+	username: str | None = Field(default=None, description='Proxy auth username')
+	password: str | None = Field(default=None, description='Proxy auth password')
+
+	def __getitem__(self, key: str) -> str | None:
+		return getattr(self, key)
+
+
 class BrowserProfile(BrowserConnectArgs, BrowserLaunchPersistentContextArgs, BrowserLaunchArgs, BrowserNewContextArgs):
 	"""
 	A BrowserProfile is a static template collection of kwargs that can be passed to:
@@ -578,8 +595,9 @@ class BrowserProfile(BrowserConnectArgs, BrowserLaunchPersistentContextArgs, Bro
 	# ... extends options defined in:
 	# BrowserLaunchPersistentContextArgs, BrowserLaunchArgs, BrowserNewContextArgs, BrowserConnectArgs
 
-	# Unique identifier for this browser profile
-	id: str = Field(default_factory=uuid7str)
+	# Session/connection configuration
+	cdp_url: str | None = Field(default=None, description='CDP URL for connecting to existing browser instance')
+	is_local: bool = Field(default=True, description='Whether this is a local browser instance')
 	# label: str = 'default'
 
 	# custom options we provide that aren't native playwright kwargs
@@ -591,6 +609,13 @@ class BrowserProfile(BrowserConnectArgs, BrowserLaunchPersistentContextArgs, Bro
 		description='List of allowed domains for navigation e.g. ["*.google.com", "https://example.com", "chrome-extension://*"]',
 	)
 	keep_alive: bool | None = Field(default=None, description='Keep browser alive after agent run.')
+
+	# --- Proxy settings ---
+	# New consolidated proxy config (typed)
+	proxy: ProxySettings | None = Field(
+		default=None,
+		description='Proxy settings. Use browser_use.browser.profile.ProxySettings(server, bypass, username, password)',
+	)
 	enable_default_extensions: bool = Field(
 		default=True,
 		description="Enable automation-optimized extensions: ad blocking (uBlock Origin), cookie handling (I still don't care about cookies), and URL cleaning (ClearURLs). All extensions work automatically without manual intervention. Extensions are automatically downloaded and loaded when enabled.",
@@ -648,10 +673,10 @@ class BrowserProfile(BrowserConnectArgs, BrowserLaunchPersistentContextArgs, Bro
 
 	def __repr__(self) -> str:
 		short_dir = _log_pretty_path(self.user_data_dir) if self.user_data_dir else '<incognito>'
-		return f'BrowserProfile#{self.id[-4:]}(user_data_dir= {short_dir}, headless={self.headless})'
+		return f'BrowserProfile(user_data_dir= {short_dir}, headless={self.headless})'
 
 	def __str__(self) -> str:
-		return f'BrowserProfile#{self.id[-4:]}'
+		return 'BrowserProfile'
 
 	@model_validator(mode='after')
 	def copy_old_config_names_to_new(self) -> Self:
@@ -715,6 +740,13 @@ class BrowserProfile(BrowserConnectArgs, BrowserLaunchPersistentContextArgs, Bro
 			)
 		return self
 
+	@model_validator(mode='after')
+	def validate_proxy_settings(self) -> Self:
+		"""Ensure proxy configuration is consistent."""
+		if self.proxy and (self.proxy.bypass and not self.proxy.server):
+			logger.warning('BrowserProfile.proxy.bypass provided but proxy has no server; bypass will be ignored.')
+		return self
+
 	def get_args(self) -> list[str]:
 		"""Get the list of all Chrome CLI launch args for this profile (compiled from defaults, user-provided, and system-specific)."""
 
@@ -749,6 +781,15 @@ class BrowserProfile(BrowserConnectArgs, BrowserLaunchPersistentContextArgs, Bro
 			),
 			*(self._get_extension_args() if self.enable_default_extensions else []),
 		]
+
+		# Proxy flags
+		proxy_server = self.proxy.server if self.proxy else None
+		proxy_bypass = self.proxy.bypass if self.proxy else None
+
+		if proxy_server:
+			pre_conversion_args.append(f'--proxy-server={proxy_server}')
+			if proxy_bypass:
+				pre_conversion_args.append(f'--proxy-bypass-list={proxy_bypass}')
 
 		# convert to dict and back to dedupe and merge duplicate args
 		final_args_list = BrowserLaunchArgs.args_as_list(BrowserLaunchArgs.args_as_dict(pre_conversion_args))
