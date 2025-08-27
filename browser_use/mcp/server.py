@@ -226,7 +226,7 @@ class BrowserUseServer:
 						'properties': {
 							'index': {
 								'type': 'integer',
-								'description': 'The index of the link or element to click (from browser_get_interactive_elements_info)',
+								'description': 'The index of the link or element to click (from browser_read_and_get_state)',
 							},
 							'new_tab': {
 								'type': 'boolean',
@@ -245,21 +245,21 @@ class BrowserUseServer:
 						'properties': {
 							'index': {
 								'type': 'integer',
-								'description': 'The index of the input element (from browser_get_interactive_elements_info)',
+								'description': 'The index of the input element (from browser_read_and_get_state)',
 							},
 							'text': {'type': 'string', 'description': 'The text to type'},
 						},
 						'required': ['index', 'text'],
 					},
 				),
-				types.Tool(
-					name='browser_get_interactive_elements_info',
-					description='Get all interactive elements in the current page',
-					inputSchema={
-						'type': 'object',
-						'properties': {},
-					},
-				),
+				# types.Tool(
+				# 	name='browser_read_and_get_state',
+				# 	description='Get all interactive elements in the current page',
+				# 	inputSchema={
+				# 		'type': 'object',
+				# 		'properties': {},
+				# 	},
+				# ),
 				types.Tool(
 					name='browser_export_whole_webpage_as_pdf',
 					description="Renders the entire webpage from a specific tab into a PDF file. This tool attempts to preserve the original visual layout, including background graphics. The PDF is saved to the specified 'file_path'. Returns the absolute path to the generated file.",
@@ -441,7 +441,7 @@ class BrowserUseServer:
 			elif tool_name == 'browser_type':
 				return await self._type_text(arguments['index'], arguments['text'])
 
-			elif tool_name == 'browser_get_interactive_elements_info':
+			elif tool_name == 'browser_read_and_get_state':
 				return await self._get_browser_state(arguments.get('include_screenshot', False))
 
 			elif tool_name == 'browser_export_whole_webpage_as_pdf':
