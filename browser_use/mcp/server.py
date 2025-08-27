@@ -304,21 +304,21 @@ class BrowserUseServer:
 				# 		'required': ['query'],
 				# 	},
 				# ),
-				# types.Tool(
-				# 	name='browser_scroll',
-				# 	description='Scroll the page',
-				# 	inputSchema={
-				# 		'type': 'object',
-				# 		'properties': {
-				# 			'direction': {
-				# 				'type': 'string',
-				# 				'enum': ['up', 'down'],
-				# 				'description': 'Direction to scroll',
-				# 				'default': 'down',
-				# 			}
-				# 		},
-				# 	},
-				# ),
+				types.Tool(
+					name='browser_scroll',
+					description='Scroll the page',
+					inputSchema={
+						'type': 'object',
+						'properties': {
+							'direction': {
+								'type': 'string',
+								'enum': ['up', 'down'],
+								'description': 'Direction to scroll',
+								'default': 'down',
+							}
+						},
+					},
+				),
 				types.Tool(
 					name='browser_go_back',
 					description='Go back to the previous page',
