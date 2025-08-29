@@ -276,7 +276,7 @@ class DOMWatchdog(BaseWatchdog):
 					handler_names = [getattr(h, '__name__', str(h)) for h in handlers]
 					self.logger.debug(f'📸 ScreenshotEvent handlers registered: {len(handlers)} - {handler_names}')
 
-					screenshot_event = self.event_bus.dispatch(ScreenshotEvent(full_page=False))
+					screenshot_event = self.event_bus.dispatch(ScreenshotEvent(full_page=True))
 					self.logger.debug('📸 Dispatched ScreenshotEvent, waiting for event to complete...')
 
 					# Wait for the event itself to complete (this waits for all handlers)

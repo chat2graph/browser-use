@@ -227,8 +227,11 @@ class DomService:
 					and adjusted_y + current_bounds.height > viewport_top
 				)
 
-				if not frame_intersects:
-					return False
+				# [MODIFICATION]: To include all elements regardless of their scroll position,
+				# we comment out the check that filters elements outside the current viewport.
+				# The original behavior was to return False if the element was not intersecting the viewport.
+				# if not frame_intersects:
+				# 	return False
 
 				# Keep the original coordinate adjustment to maintain consistency
 				# This adjustment is needed for proper coordinate transformation

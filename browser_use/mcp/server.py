@@ -260,23 +260,23 @@ class BrowserUseServer:
 				# 		'properties': {},
 				# 	},
 				# ),
-				types.Tool(
-					name='browser_export_whole_webpage_as_pdf',
-					description="Renders the entire webpage from a specific tab into a PDF file. This tool attempts to preserve the original visual layout, including background graphics. The PDF is saved to the specified 'file_path'. Returns the absolute path to the generated file.",
-					inputSchema={
-						'type': 'object',
-						'properties': {
-							'file_path': {
-								'type': 'string',
-								'description': 'The relative path to save the PDF file. It must end with .pdf.',
-							},
-						},
-						'required': ['file_path'],
-					},
-				),
+				# types.Tool(
+				# 	name='browser_export_whole_webpage_as_pdf',
+				# 	description="Renders the entire webpage from a specific tab into a PDF file. This tool attempts to preserve the original visual layout, including background graphics. The PDF is saved to the specified 'file_path'. Returns the absolute path to the generated file.",
+				# 	inputSchema={
+				# 		'type': 'object',
+				# 		'properties': {
+				# 			'file_path': {
+				# 				'type': 'string',
+				# 				'description': 'The relative path to save the PDF file. It must end with .pdf.',
+				# 			},
+				# 		},
+				# 		'required': ['file_path'],
+				# 	},
+				# ),
 				types.Tool(
 					name='browser_screenshot',
-					description='Captures a screenshot of the current viewport and saves it to a file. Returns the absolute path to the generated file.',
+					description='Captures a screenshot of the whole viewport and saves it to a file, but it can not capture elements outside the viewport and can not capture an url ending with ".pdf". Returns the absolute path to the generated file.',
 					inputSchema={
 						'type': 'object',
 						'properties': {
@@ -498,9 +498,9 @@ class BrowserUseServer:
 			'user_data_dir': None,
 			'is_mobile': False,
 			'device_scale_factor': 1.0,
-			'disable_security': False,
+			'disable_security': True,
 			'headless': False,
-			'viewport_expansion': -1,
+			# 'viewport_expansion': -1,
 			**profile_config,  # Config values override defaults
 		}
 
@@ -963,11 +963,16 @@ class BrowserUseServer:
 				logger.debug(f'Restored the original scroll position to {original_scroll_y}px')
 
 	async def _screenshot(self, file_path: str) -> str:
-		"""Capture a screenshot of the entire webpage after zooming out to 50%."""
+		"""Capture a screenshot of the entire webpage."""
 		if not self.browser_session:
 			return 'Error: Browser session not active'
 		if not file_path.lower().endswith('.png'):
 			return 'Error: File path must end with .png'
+
+		current_url = await self.browser_session.get_current_page_url()
+		if current_url and current_url.lower().endswith('.pdf'):
+			logger.debug('PDF detected, exporting as image...')
+			return await self._export_as_image(file_path)
 
 		original_scroll_y = 0
 		cdp_session: Optional[CDPSession] = None
@@ -1023,6 +1028,70 @@ class BrowserUseServer:
 					session_id=cdp_session.session_id,
 				)
 				logger.debug('Restored page scale and original scroll position.')
+
+	async def _export_as_image(self, file_path: str) -> str:
+		"""Export the whole webpage as a PNG file, useful for PDFs."""
+		if not self.browser_session:
+			return 'Error: Browser session not active'
+
+		original_scroll_y = 0
+		cdp_session: Optional[CDPSession] = None
+		try:
+			cdp_session = self.browser_session.agent_focus
+			if not cdp_session:
+				return 'Error: No active tab found in browser session'
+
+			scroll_y_result = await cdp_session.cdp_client.send.Runtime.evaluate(
+				params={'expression': 'window.scrollY'},
+				session_id=cdp_session.session_id,
+			)
+			original_scroll_y = scroll_y_result.get('result', {}).get('value', 0)
+
+			absolute_path = os.path.abspath(file_path)
+			directory = os.path.dirname(absolute_path)
+			if not os.path.exists(directory):
+				os.makedirs(directory)
+
+			await self._scroll_to_bottom(cdp_session)
+
+			await cdp_session.cdp_client.send.Emulation.setEmulatedMedia(
+				params={'media': 'screen'}, session_id=cdp_session.session_id
+			)
+
+			# Use printToPDF and then convert to image. This is more reliable for PDFs.
+			pdf_data = await cdp_session.cdp_client.send.Page.printToPDF(
+				params={'printBackground': True},
+				session_id=cdp_session.session_id,
+			)
+
+			try:
+				from pdf2image import convert_from_bytes
+
+				images = convert_from_bytes(base64.b64decode(pdf_data['data']))
+				if images:
+					# For simplicity, save the first page.
+					# For multi-page PDFs, one might combine them or save separately.
+					images[0].save(absolute_path, 'PNG')
+				else:
+					return 'Error: Failed to convert PDF to image.'
+			except ImportError:
+				logger.error('pdf2image or poppler is not installed. Please install them to take screenshots of PDFs.')
+				return 'Error: pdf2image or poppler is not installed. Cannot take screenshot of PDF.'
+
+			return absolute_path
+		except Exception as e:
+			logger.error(f'Failed to export as image: {e}', exc_info=True)
+			return f'Error: Failed to export as image: {e}'
+		finally:
+			if cdp_session:
+				await cdp_session.cdp_client.send.Emulation.setEmulatedMedia(
+					params={'media': ''}, session_id=cdp_session.session_id
+				)
+				await cdp_session.cdp_client.send.Runtime.evaluate(
+					params={'expression': f'window.scrollTo(0, {original_scroll_y})'},
+					session_id=cdp_session.session_id,
+				)
+				logger.debug(f'Restored the original scroll position to {original_scroll_y}px')
 
 	async def run(self):
 		"""Run the MCP server."""
