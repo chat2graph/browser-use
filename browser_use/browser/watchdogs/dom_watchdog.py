@@ -343,6 +343,9 @@ class DOMWatchdog(BaseWatchdog):
 
 							# Highlight the interactive elements before taking screenshot(s)
 							await inject_highlighting_script(self._dom_service, self.selector_map)
+						else:
+							self.logger.debug('🔍 DOMWatchdog._build_dom_tree: Removing existing highlights...')
+							await self.browser_session.remove_highlights()
 
 						segment_event = self.event_bus.dispatch(ScreenshotEvent(full_page=True, clip=clip))
 						await segment_event
