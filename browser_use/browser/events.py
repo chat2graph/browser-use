@@ -156,6 +156,7 @@ class BrowserStateRequestEvent(BaseEvent[BrowserStateSummary]):
 
 	include_dom: bool = True
 	include_screenshot: bool = True
+	screenshot_with_highlighted_elements: bool = True
 	cache_clickable_elements_hashes: bool = True
 	include_recent_events: bool = False
 

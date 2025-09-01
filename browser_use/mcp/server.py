@@ -442,7 +442,10 @@ class BrowserUseServer:
 				return await self._type_text(arguments['index'], arguments['text'])
 
 			elif tool_name == 'browser_read_and_get_state':
-				return await self._get_browser_state(arguments.get('include_screenshot', False))
+				return await self._get_browser_state(
+					arguments.get('include_screenshot', True),
+					arguments.get('screenshot_with_highlighted_elements', True),
+				)
 
 			elif tool_name == 'browser_export_whole_webpage_as_pdf':
 				return await self._export_whole_webpage_as_pdf(arguments['file_path'])
@@ -699,12 +702,20 @@ class BrowserUseServer:
 		await event
 		return f"Typed '{text}' into element {index}"
 
-	async def _get_browser_state(self, include_screenshot: bool = False) -> str:
+	async def _get_browser_state(
+		self,
+		include_screenshot: bool = True,
+		screenshot_with_highlighted_elements: bool = True,
+	) -> str:
 		"""Get current browser state."""
 		if not self.browser_session:
 			return 'Error: No browser session active'
 
-		state = await self.browser_session.get_browser_state_summary(cache_clickable_elements_hashes=False)
+		state = await self.browser_session.get_browser_state_summary(
+			cache_clickable_elements_hashes=False,
+			include_screenshot=include_screenshot,
+			screenshot_with_highlighted_elements=screenshot_with_highlighted_elements,
+		)
 		await self.browser_session.remove_highlights()
 
 		result = {

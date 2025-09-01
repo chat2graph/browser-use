@@ -1,8 +1,12 @@
 """DOM watchdog for browser DOM tree management using CDP."""
 
 import asyncio
+import base64
+import io
 import time
 from typing import TYPE_CHECKING
+
+from PIL import Image
 
 from browser_use.browser.events import (
 	BrowserErrorEvent,
@@ -264,55 +268,18 @@ class DOMWatchdog(BaseWatchdog):
 			assert self.browser_session.agent_focus is not None, 'No current target ID'
 			await self.browser_session.get_or_create_cdp_session(target_id=self.browser_session.agent_focus.target_id, focus=True)
 
-			# Get screenshot if requested
-			screenshot_b64 = None
-			if event.include_screenshot:
-				self.logger.debug(
-					f'🔍 DOMWatchdog.on_BrowserStateRequestEvent: 📸 DOM watchdog requesting screenshot, include_screenshot={event.include_screenshot}'
-				)
-				try:
-					# Check if handler is registered
-					handlers = self.event_bus.handlers.get('ScreenshotEvent', [])
-					handler_names = [getattr(h, '__name__', str(h)) for h in handlers]
-					self.logger.debug(f'📸 ScreenshotEvent handlers registered: {len(handlers)} - {handler_names}')
-
-					screenshot_event = self.event_bus.dispatch(ScreenshotEvent(full_page=True))
-					self.logger.debug('📸 Dispatched ScreenshotEvent, waiting for event to complete...')
-
-					# Wait for the event itself to complete (this waits for all handlers)
-					await screenshot_event
-
-					# Get the single handler result
-					screenshot_b64 = await screenshot_event.event_result(raise_if_any=True, raise_if_none=True)
-				except TimeoutError:
-					self.logger.warning('📸 Screenshot timed out after 6 seconds - no handler registered or slow page?')
-
-				except Exception as e:
-					self.logger.warning(f'📸 Screenshot failed: {type(e).__name__}: {e}')
-			else:
-				self.logger.debug(f'📸 Skipping screenshot, include_screenshot={event.include_screenshot}')
-
-			# Tabs info already fetched at the beginning
-
-			# Get target title safely
+			# Get comprehensive page info from CDP EARLY (needed for potential tiled screenshots)
 			try:
-				self.logger.debug('🔍 DOMWatchdog.on_BrowserStateRequestEvent: Getting page title...')
-				title = await asyncio.wait_for(self.browser_session.get_current_page_title(), timeout=2.0)
-				self.logger.debug(f'🔍 DOMWatchdog.on_BrowserStateRequestEvent: Got title: {title}')
-			except Exception as e:
-				self.logger.debug(f'🔍 DOMWatchdog.on_BrowserStateRequestEvent: Failed to get title: {e}')
-				title = 'Page'
-
-			# Get comprehensive page info from CDP
-			try:
-				self.logger.debug('🔍 DOMWatchdog.on_BrowserStateRequestEvent: Getting page info from CDP...')
+				self.logger.debug('🔍 DOMWatchdog.on_BrowserStateRequestEvent: Getting page info from CDP (pre-screenshot)...')
 				page_info = await self._get_page_info()
 				self.logger.debug(f'🔍 DOMWatchdog.on_BrowserStateRequestEvent: Got page info from CDP: {page_info}')
 			except Exception as e:
 				self.logger.debug(
-					f'🔍 DOMWatchdog.on_BrowserStateRequestEvent: Failed to get page info from CDP: {e}, using fallback'
+					f'🔍 DOMWatchdog.on_BrowserStateRequestEvent: Failed to get page info from CDP before screenshot: {e}, using fallback'
 				)
 				# Fallback to default viewport dimensions
+				from browser_use.browser.views import PageInfo  # local import to avoid cycle at top
+
 				viewport = self.browser_session.browser_profile.viewport or {'width': 1280, 'height': 720}
 				page_info = PageInfo(
 					viewport_width=viewport['width'],
@@ -326,6 +293,118 @@ class DOMWatchdog(BaseWatchdog):
 					pixels_left=0,
 					pixels_right=0,
 				)
+
+			# Get screenshot if requested (supports tiling for long pages)
+			screenshot_b64: str | None = None
+			if event.include_screenshot:
+				self.logger.debug(
+					f'🔍 DOMWatchdog.on_BrowserStateRequestEvent: 📸 Capturing screenshot(s); include_screenshot={event.include_screenshot}'
+				)
+				try:
+					MAX_SINGLE_SCREENSHOT_HEIGHT = 8000  # conservative cap to avoid Chromium limits
+					# SEPARATOR = '|BU_SCREENSHOT_SEPARATOR|' # No longer needed
+
+					# Treat single and tiled screenshots with a unified loop
+					tiles: list[str] = []
+					tile_height = MAX_SINGLE_SCREENSHOT_HEIGHT
+					start_y = 0
+					tile_index = 0
+
+					if page_info.page_height > MAX_SINGLE_SCREENSHOT_HEIGHT:
+						self.logger.debug(
+							f'📸 Page height {page_info.page_height}px exceeds {MAX_SINGLE_SCREENSHOT_HEIGHT}px, taking tiled screenshots'
+						)
+					else:
+						self.logger.debug(
+							f'📸 Page height {page_info.page_height}px <= {MAX_SINGLE_SCREENSHOT_HEIGHT}px, taking single full_page screenshot'
+						)
+
+					while start_y < page_info.page_height:
+						height = min(tile_height, page_info.page_height - start_y)
+						# For a single screenshot, clip will be None. For tiles, it will define the region.
+						clip = (
+							None
+							if page_info.page_height <= MAX_SINGLE_SCREENSHOT_HEIGHT
+							else {
+								'x': 0.0,
+								'y': float(start_y),
+								'width': float(page_info.viewport_width),
+								'height': float(height),
+							}
+						)
+
+						if clip:
+							self.logger.debug(
+								f'📸 Capturing tile {tile_index} at y={start_y} height={height} viewport_height={page_info.viewport_height}'
+							)
+
+						if event.screenshot_with_highlighted_elements:
+							from browser_use.dom.debug.highlights import inject_highlighting_script
+
+							# Highlight the interactive elements before taking screenshot(s)
+							await inject_highlighting_script(self._dom_service, self.selector_map)
+
+						segment_event = self.event_bus.dispatch(ScreenshotEvent(full_page=True, clip=clip))
+						await segment_event
+						try:
+							segment_b64 = await segment_event.event_result(raise_if_any=True, raise_if_none=True)
+							if segment_b64:
+								tiles.append(segment_b64)
+							else:
+								self.logger.warning(f'📸 Empty tile result at index {tile_index}')
+						except Exception as tile_err:
+							self.logger.warning(f'📸 Failed to capture tile {tile_index}: {tile_err}')
+
+						# For single screenshots, we exit after one iteration.
+						if clip is None:
+							break
+						start_y += height
+						tile_index += 1
+
+					if not tiles:
+						self.logger.warning('📸 No tiles captured; screenshot_b64 will remain None')
+					elif len(tiles) == 1:
+						self.logger.debug('📸 Captured 1 tile; using it directly')
+						screenshot_b64 = tiles[0]
+					else:
+						self.logger.debug(f'📸 Captured {len(tiles)} tiles; stitching them together')
+						try:
+							image_tiles = [Image.open(io.BytesIO(base64.b64decode(t))) for t in tiles]
+							total_height = sum(img.height for img in image_tiles)
+							# Assume all tiles have the same width
+							max_width = max(img.width for img in image_tiles)
+
+							stitched_image = Image.new('RGB', (max_width, total_height))
+							current_y = 0
+							for img in image_tiles:
+								stitched_image.paste(img, (0, current_y))
+								current_y += img.height
+
+							buffered = io.BytesIO()
+							stitched_image.save(buffered, format='PNG')
+							screenshot_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+							self.logger.debug(f'📸 Successfully stitched {len(tiles)} tiles into a single image.')
+						except Exception as stitch_err:
+							self.logger.error(f'📸 Failed to stitch screenshot tiles: {stitch_err}')
+							raise stitch_err
+
+				except TimeoutError:
+					self.logger.warning('📸 Screenshot timed out - no handler registered or slow page?')
+				except Exception as e:
+					self.logger.warning(f'📸 Screenshot(s) failed: {type(e).__name__}: {e}')
+			else:
+				self.logger.debug(f'📸 Skipping screenshot, include_screenshot={event.include_screenshot}')
+
+			# Tabs info already fetched at the beginning
+
+			# Get target title safely
+			try:
+				self.logger.debug('🔍 DOMWatchdog.on_BrowserStateRequestEvent: Getting page title...')
+				title = await asyncio.wait_for(self.browser_session.get_current_page_title(), timeout=2.0)
+				self.logger.debug(f'🔍 DOMWatchdog.on_BrowserStateRequestEvent: Got title: {title}')
+			except Exception as e:
+				self.logger.debug(f'🔍 DOMWatchdog.on_BrowserStateRequestEvent: Failed to get title: {e}')
+				title = 'Page'
 
 			# Check for PDF viewer
 			is_pdf_viewer = page_url.endswith('.pdf') or '/pdf/' in page_url
