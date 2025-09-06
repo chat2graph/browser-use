@@ -274,20 +274,20 @@ class BrowserUseServer:
 				# 		'required': ['file_path'],
 				# 	},
 				# ),
-				types.Tool(
-					name='browser_screenshot',
-					description='Captures a screenshot of the whole viewport and saves it to a file. But when taking screenshots of pages with special layouts (such as built-in PDF viewers), the existing _screenshot function cannot correctly capture the main content we expect, making it unable to handle screenshot requests for URLs ending in ".pdf". Returns the absolute path to the generated file.',
-					inputSchema={
-						'type': 'object',
-						'properties': {
-							'file_path': {
-								'type': 'string',
-								'description': 'The relative path to save the PNG file. It must end with .png.',
-							},
-						},
-						'required': ['file_path'],
-					},
-				),
+				# types.Tool(
+				# 	name='browser_screenshot',
+				# 	description='Captures a screenshot of the whole viewport and saves it to a file. But when taking screenshots of pages with special layouts (such as built-in PDF viewers), the existing _screenshot function cannot correctly capture the main content we expect, making it unable to handle screenshot requests for URLs ending in ".pdf". Returns the absolute path to the generated file.',
+				# 	inputSchema={
+				# 		'type': 'object',
+				# 		'properties': {
+				# 			'file_path': {
+				# 				'type': 'string',
+				# 				'description': 'The relative path to save the PNG file. It must end with .png.',
+				# 			},
+				# 		},
+				# 		'required': ['file_path'],
+				# 	},
+				# ),
 				# types.Tool(
 				# 	name='browser_extract_content',
 				# 	description='Extract structured content from the current page based on a query',
@@ -304,21 +304,21 @@ class BrowserUseServer:
 				# 		'required': ['query'],
 				# 	},
 				# ),
-				types.Tool(
-					name='browser_scroll',
-					description='Scroll the page',
-					inputSchema={
-						'type': 'object',
-						'properties': {
-							'direction': {
-								'type': 'string',
-								'enum': ['up', 'down'],
-								'description': 'Direction to scroll',
-								'default': 'down',
-							}
-						},
-					},
-				),
+				# types.Tool(
+				# 	name='browser_scroll',
+				# 	description='Scroll the page',
+				# 	inputSchema={
+				# 		'type': 'object',
+				# 		'properties': {
+				# 			'direction': {
+				# 				'type': 'string',
+				# 				'enum': ['up', 'down'],
+				# 				'description': 'Direction to scroll',
+				# 				'default': 'down',
+				# 			}
+				# 		},
+				# 	},
+				# ),
 				types.Tool(
 					name='browser_go_back',
 					description='Go back to the previous page',
