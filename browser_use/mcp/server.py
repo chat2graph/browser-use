@@ -351,6 +351,21 @@ class BrowserUseServer:
 					description='Close the browser session',
 					inputSchema={'type': 'object', 'properties': {}},
 				),
+				types.Tool(
+					name='browser_download_pdf',
+					description='Download a PDF file from a URL to a specified path',
+					inputSchema={
+						'type': 'object',
+						'properties': {
+							'url': {'type': 'string', 'description': 'The URL of the PDF file to download'},
+							'file_path': {
+								'type': 'string',
+								'description': 'The relative path to save the PDF file. It must end with .pdf.',
+							},
+						},
+						'required': ['url', 'file_path'],
+					},
+				),
 				# types.Tool(
 				# 	name='retry_with_browser_use_agent',
 				# 	description='Retry a task using the browser-use agent. Only use this as a last resort if you fail to interact with a page multiple times.',
@@ -474,6 +489,9 @@ class BrowserUseServer:
 			elif tool_name == 'browser_close_tab':
 				return await self._close_tab(arguments['tab_id'])
 
+			elif tool_name == 'browser_download_pdf':
+				return await self._download_pdf(arguments['url'], arguments['file_path'])
+
 		return f'Unknown tool: {tool_name}'
 
 	async def _init_browser_session(self, allowed_domains: list[str] | None = None, **kwargs):
@@ -503,6 +521,8 @@ class BrowserUseServer:
 			'device_scale_factor': 1.0,
 			'disable_security': True,
 			'headless': False,
+			# Disable auto-download to prevent interference with our manual PDF download, since the previous downloading feature is not very reliable.
+			'auto_download_pdfs': False,
 			# 'viewport_expansion': -1,
 			**profile_config,  # Config values override defaults
 		}
@@ -856,6 +876,214 @@ class BrowserUseServer:
 		await event
 		current_url = await self.browser_session.get_current_page_url()
 		return f'Closed tab # {tab_id}, now on {current_url}'
+
+	async def _download_pdf(self, url: str, file_path: str) -> str:
+		"""Download a PDF file from a URL to a specified path using browser simulation."""
+		if not file_path.lower().endswith('.pdf'):
+			return 'Error: File path must end with .pdf'
+
+		try:
+			# Always use browser-based download for better success rate
+			if not self.browser_session:
+				await self._init_browser_session()
+
+			return await self._download_pdf_via_browser(url, file_path)
+
+		except Exception as e:
+			logger.error(f'Failed to download PDF: {e}', exc_info=True)
+			return f'Error: Failed to download PDF: {str(e)}'
+
+	async def _download_pdf_via_browser(self, url: str, file_path: str) -> str:
+		"""Download PDF using browser session - simulates manual save operation."""
+		if not self.browser_session:
+			raise Exception('Browser session not available')
+
+		from browser_use.browser.events import NavigateToUrlEvent
+
+		# Create absolute path and ensure directory exists
+		absolute_path = os.path.abspath(file_path)
+		directory = os.path.dirname(absolute_path)
+		if not os.path.exists(directory):
+			os.makedirs(directory)
+
+		# Navigate to the PDF URL
+		event = self.browser_session.event_bus.dispatch(NavigateToUrlEvent(url=url))
+		await event
+
+		# Wait for the PDF to fully load
+		await asyncio.sleep(5)
+
+		# Get the current tab and use CDP to download the PDF
+		cdp_session = self.browser_session.agent_focus
+		if not cdp_session:
+			raise Exception('No active CDP session')
+
+		try:
+			# Method 1: Try to get PDF content directly from the page using fetch
+			logger.debug('Attempting to get PDF content via JavaScript fetch...')
+
+			fetch_result = await cdp_session.cdp_client.send.Runtime.evaluate(
+				params={
+					'expression': """
+						(async () => {
+							try {
+								const response = await fetch(window.location.href);
+								if (!response.ok) {
+									throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+								}
+								const arrayBuffer = await response.arrayBuffer();
+								const uint8Array = new Uint8Array(arrayBuffer);
+								const binaryString = String.fromCharCode.apply(null, uint8Array);
+								const base64 = btoa(binaryString);
+								return {success: true, data: base64, size: arrayBuffer.byteLength};
+							} catch (error) {
+								return {success: false, error: error.message};
+							}
+						})()
+					""",
+					'awaitPromise': True,
+				},
+				session_id=cdp_session.session_id,
+			)
+
+			if 'result' in fetch_result and 'value' in fetch_result['result']:
+				result = fetch_result['result']['value']
+				if result and result.get('success'):
+					pdf_base64 = result['data']
+					pdf_content = base64.b64decode(pdf_base64)
+
+					# Verify it's actually a PDF
+					if pdf_content.startswith(b'%PDF'):
+						with open(absolute_path, 'wb') as f:
+							f.write(pdf_content)
+
+						file_size = len(pdf_content)
+						return f'PDF downloaded successfully to: {absolute_path} ({file_size} bytes)'
+					else:
+						logger.warning('Fetched content is not a valid PDF, trying browser download...')
+				else:
+					error_msg = result.get('error', 'Unknown error') if result else 'No result returned'
+					logger.warning(f'Fetch failed: {error_msg}, trying browser download...')
+
+			# Method 2: Try to use browser's native download via CDP
+			logger.debug('Attempting download via CDP download mechanism...')
+
+			# Enable Page and Browser domains
+			await cdp_session.cdp_client.send.Page.enable(session_id=cdp_session.session_id)
+
+			# Set download behavior to allow downloads to specific directory
+			try:
+				await cdp_session.cdp_client.send.Browser.setDownloadBehavior(
+					params={
+						'behavior': 'allow',
+						'downloadPath': directory,
+					},
+					session_id=cdp_session.session_id,
+				)
+			except Exception as e:
+				logger.debug(f'Could not set download behavior: {e}')
+
+			# Method 2a: Try programmatic download by navigating to URL with download intent
+			download_js = f"""
+				(async () => {{
+					try {{
+						// Create a temporary link element to trigger download
+						const link = document.createElement('a');
+						link.href = window.location.href;
+						link.download = '{os.path.basename(file_path)}';
+						link.style.display = 'none';
+						document.body.appendChild(link);
+						link.click();
+						document.body.removeChild(link);
+						
+						// Also try using fetch + blob approach
+						const response = await fetch(window.location.href);
+						const blob = await response.blob();
+						const url = window.URL.createObjectURL(blob);
+						const a = document.createElement('a');
+						a.href = url;
+						a.download = '{os.path.basename(file_path)}';
+						a.click();
+						window.URL.revokeObjectURL(url);
+						
+						return {{success: true, message: 'Download triggered'}};
+					}} catch (error) {{
+						return {{success: false, error: error.message}};
+					}}
+				}})()
+			"""
+
+			download_result = await cdp_session.cdp_client.send.Runtime.evaluate(
+				params={
+					'expression': download_js,
+					'awaitPromise': True,
+				},
+				session_id=cdp_session.session_id,
+			)
+
+			# Wait for download to complete
+			await asyncio.sleep(5)
+
+			# Check if file was downloaded
+			import glob
+
+			download_patterns = [
+				os.path.join(directory, '*.pdf'),
+				os.path.join(directory, f'*{os.path.basename(file_path)}'),
+				os.path.join(directory, '*'),  # Check all files as last resort
+			]
+
+			for pattern in download_patterns:
+				downloaded_files = glob.glob(pattern)
+				pdf_files = [f for f in downloaded_files if f.lower().endswith('.pdf')]
+
+				if pdf_files:
+					# Find the most recently created PDF file
+					latest_pdf = max(pdf_files, key=os.path.getctime)
+
+					# Verify it's a valid PDF
+					try:
+						with open(latest_pdf, 'rb') as f:
+							content = f.read(10)
+							if content.startswith(b'%PDF'):
+								# Move to target location if different
+								if latest_pdf != absolute_path:
+									os.rename(latest_pdf, absolute_path)
+
+								file_size = os.path.getsize(absolute_path)
+								return f'PDF downloaded successfully via browser to: {absolute_path} ({file_size} bytes)'
+					except Exception as e:
+						logger.debug(f'Error checking downloaded file {latest_pdf}: {e}')
+						continue
+
+			# Method 3: Last resort - use printToPDF but warn user it's not the original
+			logger.warning('Using printToPDF as last resort - this creates a rendered version, not the original PDF')
+
+			pdf_data = await cdp_session.cdp_client.send.Page.printToPDF(
+				params={
+					'printBackground': True,
+					'scale': 1.0,
+					'paperWidth': 8.5,
+					'paperHeight': 11,
+					'marginTop': 0,
+					'marginBottom': 0,
+					'marginLeft': 0,
+					'marginRight': 0,
+					'preferCSSPageSize': True,
+				},
+				session_id=cdp_session.session_id,
+			)
+
+			# Save the rendered PDF
+			with open(absolute_path, 'wb') as f:
+				f.write(base64.b64decode(pdf_data['data']))
+
+			file_size = os.path.getsize(absolute_path)
+			return f'⚠️  PDF saved as rendered version (not original file) to: {absolute_path} ({file_size} bytes). This is a browser-generated PDF that may differ from the original.'
+
+		except Exception as e:
+			logger.error(f'All browser download methods failed: {e}', exc_info=True)
+			raise Exception(f'Failed to download PDF via browser: {str(e)}')
 
 	async def _scroll_to_bottom(self, cdp_session: CDPSession):
 		"""Use screen-by-screen scrolling with added delays to ensure lazy-loaded images are reliably triggered."""

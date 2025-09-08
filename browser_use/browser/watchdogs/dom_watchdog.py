@@ -392,9 +392,9 @@ class DOMWatchdog(BaseWatchdog):
 							raise stitch_err
 
 				except TimeoutError:
-					self.logger.warning('📸 Screenshot timed out - no handler registered or slow page?')
+					self.logger.error('📸 Screenshot timed out - no handler registered or slow page?')
 				except Exception as e:
-					self.logger.warning(f'📸 Screenshot(s) failed: {type(e).__name__}: {e}')
+					self.logger.error(f'📸 Screenshot(s) failed: {type(e).__name__}: {e}')
 			else:
 				self.logger.debug(f'📸 Skipping screenshot, include_screenshot={event.include_screenshot}')
 
