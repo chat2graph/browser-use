@@ -506,16 +506,6 @@ class BrowserUseServer:
 
 		# Get profile config
 		profile_config = get_default_profile(self.config)
-		# TODO: Temporary debug logs to trace headless mode issues
-		# Check environment variables for headless mode
-		env_headless = os.environ.get('BROWSER_USE_HEADLESS', 'false').lower() == 'true'
-		env_display = os.environ.get('DISPLAY')
-
-		logger.error('🔍 [DEBUG] Environment check:')
-		logger.error(f'🔍 [DEBUG] - BROWSER_USE_HEADLESS: {os.environ.get("BROWSER_USE_HEADLESS", "not set")}')
-		logger.error(f'🔍 [DEBUG] - DISPLAY: {env_display or "not set"}')
-		logger.error(f'🔍 [DEBUG] - env_headless resolved to: {env_headless}')
-		# TODO: End of temporary debug logs
 
 		# Merge profile config with defaults and overrides
 		profile_data = {
@@ -536,10 +526,6 @@ class BrowserUseServer:
 			# 'viewport_expansion': -1,
 			**profile_config,  # Config values override defaults
 		}
-		# TODO: Temporary debug logs to trace headless mode issues
-		logger.error(f"🔍 [DEBUG] profile_data['headless'] after initial setup: {profile_data['headless']}")
-		logger.error(f'🔍 [DEBUG] profile_config from get_default_profile: {profile_config}')
-		# TODO: End of temporary debug logs
 
 		# Tool parameter overrides (highest priority)
 		if allowed_domains is not None:
@@ -551,34 +537,11 @@ class BrowserUseServer:
 
 		# Create browser profile
 		profile = BrowserProfile(**profile_data)
-		# TODO: Temporary debug logs to trace headless mode issues
-		logger.error('🔍 [DEBUG] After creating BrowserProfile:')
-		logger.error(f'🔍 [DEBUG] - profile.headless: {profile.headless}')
-		logger.error(f'🔍 [DEBUG] - profile.args (first 5): {profile.get_args()[:5] if hasattr(profile, "get_args") else "N/A"}')
-
-		# Check if detect_display_configuration will be called
-		logger.error('🔍 [DEBUG] About to create BrowserSession...')
-		# TODO: End of temporary debug logs
 
 		# Create browser session
 		self.browser_session = BrowserSession(browser_profile=profile)
 
-		# TODO: Temporary debug logs to trace headless mode issues
-		logger.error('🔍 [DEBUG] After creating BrowserSession, before start():')
-		logger.error(f'🔍 [DEBUG] - browser_session.browser_profile.headless: {self.browser_session.browser_profile.headless}')
-		# TODO: End of temporary debug logs
 		await self.browser_session.start()
-		# TODO: Temporary debug logs to trace headless mode issues
-		logger.error('🔍 [DEBUG] After browser_session.start():')
-		logger.error(f'🔍 [DEBUG] - browser_session.browser_profile.headless: {self.browser_session.browser_profile.headless}')
-		logger.error(f'🔍 [DEBUG] - browser_session.agent_focus: {self.browser_session.agent_focus}')
-		if hasattr(self.browser_session.browser_profile, 'get_args'):
-			args = self.browser_session.browser_profile.get_args()
-			headless_args = [arg for arg in args if 'headless' in arg.lower()]
-			logger.error(f'🔍 [DEBUG] - headless-related args: {headless_args}')
-		else:
-			logger.error('🔍 [DEBUG] - get_args method not available')
-		# TODO: End of temporary debug logs
 
 		# Create controller for direct actions
 		self.controller = Controller()
