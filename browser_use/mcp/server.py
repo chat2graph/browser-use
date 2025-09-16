@@ -520,7 +520,7 @@ class BrowserUseServer:
 			'is_mobile': False,
 			'device_scale_factor': 1.0,
 			'disable_security': True,
-			'headless': env_headless,  # Use environment variable
+			'headless': os.getenv('BROWSER_USE_HEADLESS', 'true').lower() == 'true',
 			# Disable auto-download to prevent interference with our manual PDF download, since the previous downloading feature is not very reliable.
 			'auto_download_pdfs': False,
 			# 'viewport_expansion': -1,
