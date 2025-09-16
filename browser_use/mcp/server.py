@@ -503,6 +503,7 @@ class BrowserUseServer:
 		_ensure_all_loggers_use_stderr()
 
 		logger.debug('Initializing browser session...')
+		logger.error('[debug] Starting browser session initialization...')
 
 		# Get profile config
 		profile_config = get_default_profile(self.config)
@@ -520,12 +521,14 @@ class BrowserUseServer:
 			'is_mobile': False,
 			'device_scale_factor': 1.0,
 			'disable_security': True,
-			'headless': os.getenv('BROWSER_USE_HEADLESS', 'true').lower() == 'true',
+			'headless': os.getenv('BROWSER_USE_HEADLESS', 'false').lower() == 'true',
 			# Disable auto-download to prevent interference with our manual PDF download, since the previous downloading feature is not very reliable.
 			'auto_download_pdfs': False,
 			# 'viewport_expansion': -1,
 			**profile_config,  # Config values override defaults
 		}
+
+		logger.error(f'[debug] Final profile data: {profile_data}')
 
 		# Tool parameter overrides (highest priority)
 		if allowed_domains is not None:
@@ -539,9 +542,19 @@ class BrowserUseServer:
 		profile = BrowserProfile(**profile_data)
 
 		# Create browser session
+		logger.error('[debug] Creating browser session...')
 		self.browser_session = BrowserSession(browser_profile=profile)
+		logger.error('[debug] Browser session object created')
 
+		logger.error('[debug] Starting browser session...')
 		await self.browser_session.start()
+		logger.error('[debug] Browser session started successfully')
+
+		# Check if we have an active CDP session
+		if hasattr(self.browser_session, 'agent_focus') and self.browser_session.agent_focus:
+			logger.error(f'[debug] Active CDP session found: {self.browser_session.agent_focus}')
+		else:
+			logger.error('[debug] WARNING: No active CDP session found after browser start')
 
 		# Create controller for direct actions
 		self.controller = Controller()
@@ -561,6 +574,7 @@ class BrowserUseServer:
 		self.file_system = FileSystem(base_dir=Path(file_system_path).expanduser())
 
 		logger.debug('Browser session initialized')
+		logger.error('[debug] Browser session initialization completed successfully')
 
 	async def _retry_with_browser_use_agent(
 		self,
@@ -885,8 +899,11 @@ class BrowserUseServer:
 
 		try:
 			# Always use browser-based download for better success rate
+			logger.error(f'[debug] Browser session status: {self.browser_session is not None}')
 			if not self.browser_session:
+				logger.error('[debug] Browser session not found, initializing...')
 				await self._init_browser_session()
+				logger.error(f'[debug] Browser session after init: {self.browser_session is not None}')
 
 			return await self._download_pdf_via_browser(url, file_path)
 
@@ -897,7 +914,10 @@ class BrowserUseServer:
 	async def _download_pdf_via_browser(self, url: str, file_path: str) -> str:
 		"""Download PDF using browser session - simulates manual save operation."""
 		if not self.browser_session:
+			logger.error('[debug] Browser session is None - this should not happen')
 			raise Exception('Browser session not available')
+
+		logger.error(f'[debug] Browser session exists: {self.browser_session}')
 
 		from browser_use.browser.events import NavigateToUrlEvent
 
@@ -915,8 +935,18 @@ class BrowserUseServer:
 		await asyncio.sleep(5)
 
 		# Get the current tab and use CDP to download the PDF
+		logger.error('[debug] Getting CDP session...')
 		cdp_session = self.browser_session.agent_focus
+		logger.error(f'[debug] CDP session retrieved: {cdp_session}')
+
 		if not cdp_session:
+			logger.error('[debug] CDP session is None - checking browser session state')
+			logger.error(f'[debug] Browser session type: {type(self.browser_session)}')
+			logger.error(f'[debug] Browser session attributes: {dir(self.browser_session)}')
+			if hasattr(self.browser_session, 'agent_focus'):
+				logger.error(f'[debug] agent_focus attribute value: {self.browser_session.agent_focus}')
+			else:
+				logger.error('[debug] agent_focus attribute not found')
 			raise Exception('No active CDP session')
 
 		try:
