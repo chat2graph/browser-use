@@ -447,52 +447,7 @@ class BrowserUseServer:
 			if not self.browser_session:
 				await self._init_browser_session()
 
-			# Additional check: ensure agent_focus is still valid
-			if self.browser_session and not self.browser_session.agent_focus:
-				logger.warning('Browser session exists but agent_focus is None - attempting to restore...')
-
-				try:
-					# Try to get existing pages and restore agent_focus
-					if self.browser_session._cdp_client_root:
-						targets = await self.browser_session._cdp_get_all_pages()
-
-						if targets:
-							# Use the first available page to restore agent_focus
-							target_id = targets[0]['targetId']
-							self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
-								target_id=target_id, focus=True
-							)
-						else:
-							# Create a new blank page if no targets exist
-							try:
-								new_target = await self.browser_session._cdp_client_root.send.Target.createTarget(
-									params={'url': 'about:blank'}
-								)
-								target_id = new_target['targetId']
-								self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
-									target_id=target_id, focus=True
-								)
-							except Exception as create_error:
-								logger.error(f'Failed to create new target: {create_error}')
-					else:
-						# Try to reconnect
-						try:
-							await self.browser_session.connect(cdp_url=self.browser_session.cdp_url)
-							# Retry getting targets after reconnection
-							targets = await self.browser_session._cdp_get_all_pages()
-							if targets:
-								target_id = targets[0]['targetId']
-								self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
-									target_id=target_id, focus=True
-								)
-						except Exception as reconnect_error:
-							logger.error(f'CDP reconnection failed: {reconnect_error}')
-
-				except Exception as e:
-					logger.error(f'Failed to restore agent_focus: {e}')
-					return f'Error: Failed to restore browser session: {str(e)}'
-
-			# Final verification
+			# Check if we have a valid browser session
 			if not (self.browser_session and self.browser_session.agent_focus):
 				return 'Error: Browser session not properly initialized'
 
@@ -593,7 +548,9 @@ class BrowserUseServer:
 
 		# Check if we have an active CDP session
 		if not (hasattr(self.browser_session, 'agent_focus') and self.browser_session.agent_focus):
-			logger.error('WARNING: No active CDP session found after browser start')
+			logger.error(
+				'Browser startup failed: No active CDP session found. Check browser installation and system dependencies.'
+			)
 
 		# Create controller for direct actions
 		self.controller = Controller()
