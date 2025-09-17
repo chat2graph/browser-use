@@ -445,7 +445,48 @@ class BrowserUseServer:
 		if tool_name.startswith('browser_'):
 			# Ensure browser session exists
 			if not self.browser_session:
+				# TODO: Temporary debug logs to trace agent_focus issues
+				logger.error('[debug] Browser session not found, initializing...')
+				# TODO: End temporary debug logs
 				await self._init_browser_session()
+			# TODO: Temporary debug logs to trace agent_focus issues
+			# Additional check: ensure agent_focus is still valid
+			if self.browser_session and not self.browser_session.agent_focus:
+				logger.error('[debug] Browser session exists but agent_focus is None - attempting to restore...')
+				try:
+					# Try to get existing pages and restore agent_focus
+					targets = await self.browser_session._cdp_get_all_pages()
+					if targets:
+						# Use the first available page to restore agent_focus
+						target_id = targets[0]['targetId']
+						logger.error(f'[debug] Attempting to restore agent_focus to target: {target_id}')
+						self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
+							target_id=target_id, focus=True
+						)
+						logger.error(f'[debug] Agent focus restored successfully: {self.browser_session.agent_focus}')
+					else:
+						logger.error('[debug] No targets available - creating new blank page')
+						# Create a new blank page if no targets exist
+						if self.browser_session._cdp_client_root:
+							new_target = await self.browser_session._cdp_client_root.send.Target.createTarget(
+								params={'url': 'about:blank'}
+							)
+							target_id = new_target['targetId']
+							self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
+								target_id=target_id, focus=True
+							)
+							logger.error(f'[debug] Created new page and restored agent_focus: {target_id}')
+				except Exception as e:
+					logger.error(f'[debug] Failed to restore agent_focus: {e}', exc_info=True)
+					return f'Error: Failed to restore browser session: {str(e)}'
+
+			# Final verification
+			if self.browser_session and self.browser_session.agent_focus:
+				logger.error(f'[debug] Agent focus verified: {self.browser_session.agent_focus.target_id}')
+			else:
+				logger.error('[debug] Agent focus still None after restoration attempts')
+				return 'Error: Browser session not properly initialized'
+			# TODO: End temporary debug logs
 
 			if tool_name == 'browser_navigate':
 				return await self._navigate(arguments['url'], arguments.get('new_tab', False))
@@ -542,13 +583,9 @@ class BrowserUseServer:
 		profile = BrowserProfile(**profile_data)
 
 		# Create browser session
-		logger.error('[debug] Creating browser session...')
 		self.browser_session = BrowserSession(browser_profile=profile)
-		logger.error('[debug] Browser session object created')
 
-		logger.error('[debug] Starting browser session...')
 		await self.browser_session.start()
-		logger.error('[debug] Browser session started successfully')
 
 		# Check if we have an active CDP session
 		if hasattr(self.browser_session, 'agent_focus') and self.browser_session.agent_focus:
@@ -899,11 +936,8 @@ class BrowserUseServer:
 
 		try:
 			# Always use browser-based download for better success rate
-			logger.error(f'[debug] Browser session status: {self.browser_session is not None}')
 			if not self.browser_session:
-				logger.error('[debug] Browser session not found, initializing...')
 				await self._init_browser_session()
-				logger.error(f'[debug] Browser session after init: {self.browser_session is not None}')
 
 			return await self._download_pdf_via_browser(url, file_path)
 
@@ -914,10 +948,7 @@ class BrowserUseServer:
 	async def _download_pdf_via_browser(self, url: str, file_path: str) -> str:
 		"""Download PDF using browser session - simulates manual save operation."""
 		if not self.browser_session:
-			logger.error('[debug] Browser session is None - this should not happen')
 			raise Exception('Browser session not available')
-
-		logger.error(f'[debug] Browser session exists: {self.browser_session}')
 
 		from browser_use.browser.events import NavigateToUrlEvent
 
@@ -935,14 +966,9 @@ class BrowserUseServer:
 		await asyncio.sleep(5)
 
 		# Get the current tab and use CDP to download the PDF
-		logger.error('[debug] Getting CDP session...')
 		cdp_session = self.browser_session.agent_focus
-		logger.error(f'[debug] CDP session retrieved: {cdp_session}')
 
 		if not cdp_session:
-			logger.error('[debug] CDP session is None - checking browser session state')
-			logger.error(f'[debug] Browser session type: {type(self.browser_session)}')
-			logger.error(f'[debug] Browser session attributes: {dir(self.browser_session)}')
 			if hasattr(self.browser_session, 'agent_focus'):
 				logger.error(f'[debug] agent_focus attribute value: {self.browser_session.agent_focus}')
 			else:
