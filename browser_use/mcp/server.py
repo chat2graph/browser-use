@@ -523,7 +523,7 @@ class BrowserUseServer:
 			'user_data_dir': None,
 			'is_mobile': False,
 			'device_scale_factor': 1.0,
-			'disable_security': True,
+			'disable_security': False,
 			'headless': os.getenv('BROWSER_USE_HEADLESS', 'false').lower() == 'true',
 			# Disable auto-download to prevent interference with our manual PDF download, since the previous downloading feature is not very reliable.
 			'auto_download_pdfs': False,
