@@ -531,6 +531,19 @@ class BrowserUseServer:
 			**profile_config,  # Config values override defaults
 		}
 
+		# Add sandbox-related args based on environment variable
+		# NO_SANDBOX defaults to false for security, but can be enabled for server environments
+		if os.getenv('BROWSER_USE_NO_SANDBOX', 'false').lower() == 'true':
+			extra_args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
+
+			# Merge with existing args from profile_config
+			existing_args = profile_data.get('args', [])
+			# Avoid duplicates
+			for arg in extra_args:
+				if arg not in existing_args:
+					existing_args.append(arg)
+			profile_data['args'] = existing_args
+
 		# Tool parameter overrides (highest priority)
 		if allowed_domains is not None:
 			profile_data['allowed_domains'] = allowed_domains
