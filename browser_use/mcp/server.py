@@ -453,29 +453,65 @@ class BrowserUseServer:
 			# Additional check: ensure agent_focus is still valid
 			if self.browser_session and not self.browser_session.agent_focus:
 				logger.error('[debug] Browser session exists but agent_focus is None - attempting to restore...')
+				logger.error(f'[debug] _cdp_client_root status: {self.browser_session._cdp_client_root is not None}')
+
 				try:
 					# Try to get existing pages and restore agent_focus
-					targets = await self.browser_session._cdp_get_all_pages()
-					if targets:
-						# Use the first available page to restore agent_focus
-						target_id = targets[0]['targetId']
-						logger.error(f'[debug] Attempting to restore agent_focus to target: {target_id}')
-						self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
-							target_id=target_id, focus=True
+					if self.browser_session._cdp_client_root:
+						logger.error('[debug] CDP client root exists, checking targets...')
+						targets = await self.browser_session._cdp_get_all_pages()
+						logger.error(
+							f'[debug] Found {len(targets)} targets: {[t.get("targetId", "unknown")[-4:] for t in targets]}'
 						)
-						logger.error(f'[debug] Agent focus restored successfully: {self.browser_session.agent_focus}')
-					else:
-						logger.error('[debug] No targets available - creating new blank page')
-						# Create a new blank page if no targets exist
-						if self.browser_session._cdp_client_root:
-							new_target = await self.browser_session._cdp_client_root.send.Target.createTarget(
-								params={'url': 'about:blank'}
-							)
-							target_id = new_target['targetId']
+
+						if targets:
+							# Use the first available page to restore agent_focus
+							target_id = targets[0]['targetId']
+							logger.error(f'[debug] Attempting to restore agent_focus to target: {target_id[-4:]}')
 							self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
 								target_id=target_id, focus=True
 							)
-							logger.error(f'[debug] Created new page and restored agent_focus: {target_id}')
+							logger.error(
+								f'[debug] Agent focus restored successfully: {self.browser_session.agent_focus is not None}'
+							)
+						else:
+							logger.error('[debug] No targets available - creating new blank page')
+							# Create a new blank page if no targets exist
+							try:
+								new_target = await self.browser_session._cdp_client_root.send.Target.createTarget(
+									params={'url': 'about:blank'}
+								)
+								target_id = new_target['targetId']
+								logger.error(f'[debug] Created new target: {target_id[-4:]}')
+								self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
+									target_id=target_id, focus=True
+								)
+								logger.error(
+									f'[debug] Created new page and restored agent_focus: {self.browser_session.agent_focus is not None}'
+								)
+							except Exception as create_error:
+								logger.error(f'[debug] Failed to create new target: {create_error}', exc_info=True)
+					else:
+						logger.error('[debug] CDP client root is None - browser connection failed')
+						# Try to reconnect
+						try:
+							logger.error('[debug] Attempting to reconnect CDP...')
+							await self.browser_session.connect(cdp_url=self.browser_session.cdp_url)
+							logger.error('[debug] CDP reconnection successful')
+							# Retry getting targets after reconnection
+							targets = await self.browser_session._cdp_get_all_pages()
+							logger.error(f'[debug] After reconnect, found {len(targets)} targets')
+							if targets:
+								target_id = targets[0]['targetId']
+								self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
+									target_id=target_id, focus=True
+								)
+								logger.error(
+									f'[debug] Agent focus restored after reconnect: {self.browser_session.agent_focus is not None}'
+								)
+						except Exception as reconnect_error:
+							logger.error(f'[debug] CDP reconnection failed: {reconnect_error}', exc_info=True)
+
 				except Exception as e:
 					logger.error(f'[debug] Failed to restore agent_focus: {e}', exc_info=True)
 					return f'Error: Failed to restore browser session: {str(e)}'
