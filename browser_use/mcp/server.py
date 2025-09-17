@@ -445,84 +445,56 @@ class BrowserUseServer:
 		if tool_name.startswith('browser_'):
 			# Ensure browser session exists
 			if not self.browser_session:
-				# TODO: Temporary debug logs to trace agent_focus issues
-				logger.error('[debug] Browser session not found, initializing...')
-				# TODO: End temporary debug logs
 				await self._init_browser_session()
-			# TODO: Temporary debug logs to trace agent_focus issues
+
 			# Additional check: ensure agent_focus is still valid
 			if self.browser_session and not self.browser_session.agent_focus:
-				logger.error('[debug] Browser session exists but agent_focus is None - attempting to restore...')
-				logger.error(f'[debug] _cdp_client_root status: {self.browser_session._cdp_client_root is not None}')
+				logger.warning('Browser session exists but agent_focus is None - attempting to restore...')
 
 				try:
 					# Try to get existing pages and restore agent_focus
 					if self.browser_session._cdp_client_root:
-						logger.error('[debug] CDP client root exists, checking targets...')
 						targets = await self.browser_session._cdp_get_all_pages()
-						logger.error(
-							f'[debug] Found {len(targets)} targets: {[t.get("targetId", "unknown")[-4:] for t in targets]}'
-						)
 
 						if targets:
 							# Use the first available page to restore agent_focus
 							target_id = targets[0]['targetId']
-							logger.error(f'[debug] Attempting to restore agent_focus to target: {target_id[-4:]}')
 							self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
 								target_id=target_id, focus=True
 							)
-							logger.error(
-								f'[debug] Agent focus restored successfully: {self.browser_session.agent_focus is not None}'
-							)
 						else:
-							logger.error('[debug] No targets available - creating new blank page')
 							# Create a new blank page if no targets exist
 							try:
 								new_target = await self.browser_session._cdp_client_root.send.Target.createTarget(
 									params={'url': 'about:blank'}
 								)
 								target_id = new_target['targetId']
-								logger.error(f'[debug] Created new target: {target_id[-4:]}')
 								self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
 									target_id=target_id, focus=True
 								)
-								logger.error(
-									f'[debug] Created new page and restored agent_focus: {self.browser_session.agent_focus is not None}'
-								)
 							except Exception as create_error:
-								logger.error(f'[debug] Failed to create new target: {create_error}', exc_info=True)
+								logger.error(f'Failed to create new target: {create_error}')
 					else:
-						logger.error('[debug] CDP client root is None - browser connection failed')
 						# Try to reconnect
 						try:
-							logger.error('[debug] Attempting to reconnect CDP...')
 							await self.browser_session.connect(cdp_url=self.browser_session.cdp_url)
-							logger.error('[debug] CDP reconnection successful')
 							# Retry getting targets after reconnection
 							targets = await self.browser_session._cdp_get_all_pages()
-							logger.error(f'[debug] After reconnect, found {len(targets)} targets')
 							if targets:
 								target_id = targets[0]['targetId']
 								self.browser_session.agent_focus = await self.browser_session.get_or_create_cdp_session(
 									target_id=target_id, focus=True
 								)
-								logger.error(
-									f'[debug] Agent focus restored after reconnect: {self.browser_session.agent_focus is not None}'
-								)
 						except Exception as reconnect_error:
-							logger.error(f'[debug] CDP reconnection failed: {reconnect_error}', exc_info=True)
+							logger.error(f'CDP reconnection failed: {reconnect_error}')
 
 				except Exception as e:
-					logger.error(f'[debug] Failed to restore agent_focus: {e}', exc_info=True)
+					logger.error(f'Failed to restore agent_focus: {e}')
 					return f'Error: Failed to restore browser session: {str(e)}'
 
 			# Final verification
-			if self.browser_session and self.browser_session.agent_focus:
-				logger.error(f'[debug] Agent focus verified: {self.browser_session.agent_focus.target_id}')
-			else:
-				logger.error('[debug] Agent focus still None after restoration attempts')
+			if not (self.browser_session and self.browser_session.agent_focus):
 				return 'Error: Browser session not properly initialized'
-			# TODO: End temporary debug logs
 
 			if tool_name == 'browser_navigate':
 				return await self._navigate(arguments['url'], arguments.get('new_tab', False))
@@ -580,7 +552,6 @@ class BrowserUseServer:
 		_ensure_all_loggers_use_stderr()
 
 		logger.debug('Initializing browser session...')
-		logger.error('[debug] Starting browser session initialization...')
 
 		# Get profile config
 		profile_config = get_default_profile(self.config)
@@ -605,8 +576,6 @@ class BrowserUseServer:
 			**profile_config,  # Config values override defaults
 		}
 
-		logger.error(f'[debug] Final profile data: {profile_data}')
-
 		# Tool parameter overrides (highest priority)
 		if allowed_domains is not None:
 			profile_data['allowed_domains'] = allowed_domains
@@ -620,14 +589,11 @@ class BrowserUseServer:
 
 		# Create browser session
 		self.browser_session = BrowserSession(browser_profile=profile)
-
 		await self.browser_session.start()
 
 		# Check if we have an active CDP session
-		if hasattr(self.browser_session, 'agent_focus') and self.browser_session.agent_focus:
-			logger.error(f'[debug] Active CDP session found: {self.browser_session.agent_focus}')
-		else:
-			logger.error('[debug] WARNING: No active CDP session found after browser start')
+		if not (hasattr(self.browser_session, 'agent_focus') and self.browser_session.agent_focus):
+			logger.error('WARNING: No active CDP session found after browser start')
 
 		# Create controller for direct actions
 		self.controller = Controller()
@@ -647,7 +613,6 @@ class BrowserUseServer:
 		self.file_system = FileSystem(base_dir=Path(file_system_path).expanduser())
 
 		logger.debug('Browser session initialized')
-		logger.error('[debug] Browser session initialization completed successfully')
 
 	async def _retry_with_browser_use_agent(
 		self,
@@ -1005,10 +970,6 @@ class BrowserUseServer:
 		cdp_session = self.browser_session.agent_focus
 
 		if not cdp_session:
-			if hasattr(self.browser_session, 'agent_focus'):
-				logger.error(f'[debug] agent_focus attribute value: {self.browser_session.agent_focus}')
-			else:
-				logger.error('[debug] agent_focus attribute not found')
 			raise Exception('No active CDP session')
 
 		try:
