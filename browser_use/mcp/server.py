@@ -1201,7 +1201,7 @@ class BrowserUseServer:
 
 			# step 4: Generate PDF
 			pdf_data = await cdp_session.cdp_client.send.Page.printToPDF(
-				params={'printBackground': True, 'scale': 0.5},
+				params={'printBackground': True},
 				session_id=cdp_session.session_id,
 			)
 			import base64
