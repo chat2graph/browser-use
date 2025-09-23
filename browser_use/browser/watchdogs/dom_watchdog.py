@@ -306,7 +306,6 @@ class DOMWatchdog(BaseWatchdog):
 
 					# Treat single and tiled screenshots with a unified loop
 					tiles: list[str] = []
-					tile_height = MAX_SINGLE_SCREENSHOT_HEIGHT
 					start_y = 0
 					tile_index = 0
 
@@ -320,7 +319,7 @@ class DOMWatchdog(BaseWatchdog):
 						)
 
 					while start_y < page_info.page_height:
-						height = min(tile_height, page_info.page_height - start_y)
+						height = min(MAX_SINGLE_SCREENSHOT_HEIGHT, page_info.page_height - start_y)
 						# For a single screenshot, clip will be None. For tiles, it will define the region.
 						clip = (
 							None

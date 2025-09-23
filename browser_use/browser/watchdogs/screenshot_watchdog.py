@@ -40,6 +40,7 @@ class ScreenshotWatchdog(BaseWatchdog):
 			params_dict: dict[str, Any] = {
 				'format': 'png',
 				'captureBeyondViewport': event.full_page,
+				'optimizeForSpeed': True,
 			}
 			if event.clip:
 				# The scale is 1.0 by default in the browser.

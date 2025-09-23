@@ -447,10 +447,6 @@ class BrowserUseServer:
 			if not self.browser_session:
 				await self._init_browser_session()
 
-			# Check if we have a valid browser session
-			if not (self.browser_session and self.browser_session.agent_focus):
-				return 'Error: Browser session not properly initialized'
-
 			if tool_name == 'browser_navigate':
 				return await self._navigate(arguments['url'], arguments.get('new_tab', False))
 
@@ -509,10 +505,10 @@ class BrowserUseServer:
 		logger.debug('Initializing browser session...')
 
 		# Get profile config
-		profile_config = get_default_profile(self.config)
+		profile_config = get_default_profile(self.config) or {}
 
-		# Merge profile config with defaults and overrides
-		profile_data = {
+		# Build profile data: start from user config and only fill missing defaults
+		defaults = {
 			'downloads_path': str(Path.home() / 'Downloads' / 'browser-use-mcp'),
 			'wait_between_actions': 0.5,
 			'keep_alive': False,
@@ -528,13 +524,16 @@ class BrowserUseServer:
 			# Disable auto-download to prevent interference with our manual PDF download, since the previous downloading feature is not very reliable.
 			'auto_download_pdfs': False,
 			# 'viewport_expansion': -1,
-			**profile_config,  # Config values override defaults
 		}
+		profile_data: dict[str, Any] = {**profile_config}
+		for k, v in defaults.items():
+			profile_data.setdefault(k, v)
 
 		# Add sandbox-related args based on environment variable
 		# NO_SANDBOX defaults to false for security, but can be enabled for server environments
 		if os.getenv('BROWSER_USE_NO_SANDBOX', 'false').lower() == 'true':
-			extra_args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
+			# docker args: '--disable-setuid-sandbox, --disable-gpu, --disable-dev-shm-usage'
+			extra_args = ['--no-sandbox']
 
 			# Merge with existing args from profile_config
 			existing_args = profile_data.get('args', [])
@@ -543,6 +542,15 @@ class BrowserUseServer:
 				if arg not in existing_args:
 					existing_args.append(arg)
 			profile_data['args'] = existing_args
+
+		# Maximize browser window and set a large default size
+		existing_args = profile_data.get('args', [])
+		if '--start-maximized' not in existing_args:
+			existing_args.append('--start-maximized')
+		# Set a large window size, which is especially useful for headless mode
+		if not any(arg.startswith('--window-size') for arg in existing_args):
+			existing_args.append('--window-size=1920,1080')
+		profile_data['args'] = existing_args
 
 		# Tool parameter overrides (highest priority)
 		if allowed_domains is not None:
@@ -558,12 +566,6 @@ class BrowserUseServer:
 		# Create browser session
 		self.browser_session = BrowserSession(browser_profile=profile)
 		await self.browser_session.start()
-
-		# Check if we have an active CDP session
-		if not (hasattr(self.browser_session, 'agent_focus') and self.browser_session.agent_focus):
-			logger.error(
-				'Browser startup failed: No active CDP session found. Check browser installation and system dependencies.'
-			)
 
 		# Create controller for direct actions
 		self.controller = Controller()
@@ -1226,7 +1228,7 @@ class BrowserUseServer:
 				logger.debug(f'Restored the original scroll position to {original_scroll_y}px')
 
 	async def _screenshot(self, file_path: str) -> str:
-		"""Capture a screenshot of the entire webpage after zooming out to 50%."""
+		"""Capture a screenshot of the entire webpage."""
 		if not self.browser_session:
 			return 'Error: Browser session not active'
 		if not file_path.lower().endswith('.png'):
@@ -1254,9 +1256,9 @@ class BrowserUseServer:
 			# 2. Scroll to the bottom to load all content
 			await self._scroll_to_bottom(cdp_session)
 
-			# 3. Set the page scale factor to 50%
+			# 3. Set the page scale factor to 100%
 			await cdp_session.cdp_client.send.Emulation.setPageScaleFactor(
-				params={'pageScaleFactor': 0.5}, session_id=cdp_session.session_id
+				params={'pageScaleFactor': 1}, session_id=cdp_session.session_id
 			)
 
 			# 4. Capture a full-page screenshot after scaling
