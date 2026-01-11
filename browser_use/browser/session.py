@@ -893,6 +893,7 @@ class BrowserSession(BaseModel):
 		self,
 		cache_clickable_elements_hashes: bool = True,
 		include_screenshot: bool = True,
+		screenshot_with_highlighted_elements: bool = True,
 		cached: bool = False,
 		include_recent_events: bool = False,
 	) -> BrowserStateSummary:
@@ -918,8 +919,10 @@ class BrowserSession(BaseModel):
 				BrowserStateRequestEvent(
 					include_dom=True,
 					include_screenshot=include_screenshot,
+					screenshot_with_highlighted_elements=screenshot_with_highlighted_elements,
 					cache_clickable_elements_hashes=cache_clickable_elements_hashes,
 					include_recent_events=include_recent_events,
+					event_timeout=120.0,
 				)
 			),
 		)

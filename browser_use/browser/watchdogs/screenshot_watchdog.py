@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from bubus import BaseEvent
-from cdp_use.cdp.page import CaptureScreenshotParameters
+from cdp_use.cdp.page import CaptureScreenshotParameters, Viewport
 
 from browser_use.browser.events import ScreenshotEvent
 from browser_use.browser.views import BrowserError
@@ -37,7 +37,21 @@ class ScreenshotWatchdog(BaseWatchdog):
 			cdp_session = await self.browser_session.get_or_create_cdp_session()
 
 			# Prepare screenshot parameters
-			params = CaptureScreenshotParameters(format='png', captureBeyondViewport=False)
+			params_dict: dict[str, Any] = {
+				'format': 'png',
+				'captureBeyondViewport': event.full_page,
+				'optimizeForSpeed': True,
+			}
+			if event.clip:
+				# The scale is 1.0 by default in the browser.
+				params_dict['clip'] = Viewport(
+					x=event.clip['x'],
+					y=event.clip['y'],
+					width=event.clip['width'],
+					height=event.clip['height'],
+					scale=1.0,
+				)
+			params = CaptureScreenshotParameters(**params_dict)
 
 			# Take screenshot using CDP
 			self.logger.debug(f'[ScreenshotWatchdog] Taking screenshot with params: {params}')
